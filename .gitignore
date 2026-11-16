@@ -1,0 +1,21 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Build and dependency artifacts
+/target/
+/build/
+node_modules/
+__pycache__/
+
+# Python virtual environments
+.venv/
+venv/
