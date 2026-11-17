@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+/src/main/resources/application.properties
 
 # Logs
 *.log

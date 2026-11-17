@@ -65,6 +65,24 @@ The SQL creates `users` and `orders` as baseline live tables for later migration
 simulations. Configure any future local credentials in a `.env` file; it is
 excluded from Git. Do not put credentials in committed files.
 
+## Java application
+
+The Java 17+ application uses Maven and HikariCP to connect to PostgreSQL. Copy
+`src/main/resources/application.properties.example` to
+`src/main/resources/application.properties` and set your database credentials.
+The local properties file is ignored by Git. Alternatively, configure
+`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, and `MIGRATION_BATCH_SIZE` environment
+variables; environment variables take precedence over the properties file.
+
+Run the connection health check and startup entry point with:
+
+```bash
+mvn compile exec:java -Dexec.mainClass=com.shadowbase.ShadowBaseApplication
+```
+
+The default JDBC URL is `jdbc:postgresql://localhost:5432/shadowbase`; the
+example configuration sets a default migration batch size of 1000.
+
 ## Four-week development roadmap
 
 - **Week 1 — Setup and design:** Establish the repository, document the
