@@ -1,10 +1,15 @@
 package com.shadowbase;
 
 import com.shadowbase.config.DatabaseConfig;
+import com.shadowbase.migration.ShadowTableService;
+import com.shadowbase.model.MigrationRequest;
+import com.shadowbase.parser.DdlParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.Arrays;
 
 public final class ShadowBaseApplication {
     private static final Logger LOGGER = LoggerFactory.getLogger(ShadowBaseApplication.class);
@@ -19,6 +24,21 @@ public final class ShadowBaseApplication {
             }
             LOGGER.info("ShadowBase sandbox startup ready (migration batch size: {})",
                     databaseConfig.getMigrationBatchSize());
+            if (args.length > 0) {
+                if (!"--provision".equals(args[0]) || args.length < 2) {
+                    throw new IllegalArgumentException(
+                            "Usage: ShadowBaseApplication --provision \"ALTER TABLE ... ADD COLUMN ...\"");
+                }
+                provisionShadowTable(databaseConfig, String.join(" ", Arrays.copyOfRange(args, 1, args.length)));
+            }
+        }
+    }
+
+    private static void provisionShadowTable(DatabaseConfig databaseConfig, String alterSql) throws SQLException {
+        MigrationRequest request = DdlParser.parse(alterSql);
+        LOGGER.info("Parsed ALTER TABLE statement for {}", request.tableName());
+        try (Connection connection = databaseConfig.getConnection()) {
+            new ShadowTableService().provision(connection, request);
         }
     }
 }

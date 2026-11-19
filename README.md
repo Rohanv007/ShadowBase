@@ -80,6 +80,13 @@ Run the connection health check and startup entry point with:
 mvn compile exec:java -Dexec.mainClass=com.shadowbase.ShadowBaseApplication
 ```
 
+To parse an `ALTER TABLE` statement and provision its shadow table, pass the
+statement to the entry point:
+
+```bash
+mvn compile exec:java -Dexec.args="--provision ALTER TABLE users ADD COLUMN phone VARCHAR(20)"
+```
+
 The default JDBC URL is `jdbc:postgresql://localhost:5432/shadowbase`; the
 example configuration sets a default migration batch size of 1000.
 
