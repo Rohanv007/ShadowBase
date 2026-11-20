@@ -2,6 +2,7 @@ package com.shadowbase;
 
 import com.shadowbase.config.DatabaseConfig;
 import com.shadowbase.migration.ShadowTableService;
+import com.shadowbase.migration.TriggerGeneratorService;
 import com.shadowbase.model.MigrationRequest;
 import com.shadowbase.parser.DdlParser;
 import org.slf4j.Logger;
@@ -10,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Arrays;
+import java.util.List;
 
 public final class ShadowBaseApplication {
     private static final Logger LOGGER = LoggerFactory.getLogger(ShadowBaseApplication.class);
@@ -39,6 +41,9 @@ public final class ShadowBaseApplication {
         LOGGER.info("Parsed ALTER TABLE statement for {}", request.tableName());
         try (Connection connection = databaseConfig.getConnection()) {
             new ShadowTableService().provision(connection, request);
+            TriggerGeneratorService triggerGeneratorService = new TriggerGeneratorService();
+            List<String> sharedColumns = triggerGeneratorService.getLiveTableColumns(connection, request);
+            triggerGeneratorService.createDualWriteTriggers(connection, request, sharedColumns);
         }
     }
 }
