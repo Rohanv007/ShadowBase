@@ -1,6 +1,7 @@
 package com.shadowbase;
 
 import com.shadowbase.config.DatabaseConfig;
+import com.shadowbase.migration.BackfillWorker;
 import com.shadowbase.migration.ShadowTableService;
 import com.shadowbase.migration.TriggerGeneratorService;
 import com.shadowbase.model.MigrationRequest;
@@ -19,7 +20,7 @@ public final class ShadowBaseApplication {
     private ShadowBaseApplication() {
     }
 
-    public static void main(String[] args) throws SQLException {
+    public static void main(String[] args) throws SQLException, InterruptedException {
         try (DatabaseConfig databaseConfig = new DatabaseConfig()) {
             if (!databaseConfig.testConnection()) {
                 throw new SQLException("Database health check failed");
@@ -36,7 +37,8 @@ public final class ShadowBaseApplication {
         }
     }
 
-    private static void provisionShadowTable(DatabaseConfig databaseConfig, String alterSql) throws SQLException {
+    private static void provisionShadowTable(DatabaseConfig databaseConfig, String alterSql)
+            throws SQLException, InterruptedException {
         MigrationRequest request = DdlParser.parse(alterSql);
         LOGGER.info("Parsed ALTER TABLE statement for {}", request.tableName());
         try (Connection connection = databaseConfig.getConnection()) {
@@ -44,6 +46,8 @@ public final class ShadowBaseApplication {
             TriggerGeneratorService triggerGeneratorService = new TriggerGeneratorService();
             List<String> sharedColumns = triggerGeneratorService.getLiveTableColumns(connection, request);
             triggerGeneratorService.createDualWriteTriggers(connection, request, sharedColumns);
+            new BackfillWorker().backfill(connection, request, sharedColumns,
+                    databaseConfig.getMigrationBatchSize());
         }
     }
 }
