@@ -6,6 +6,7 @@ import com.shadowbase.migration.ShadowTableService;
 import com.shadowbase.migration.TriggerGeneratorService;
 import com.shadowbase.model.MigrationRequest;
 import com.shadowbase.parser.DdlParser;
+import com.shadowbase.verification.ConsistencyVerifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,6 +48,8 @@ public final class ShadowBaseApplication {
             List<String> sharedColumns = triggerGeneratorService.getLiveTableColumns(connection, request);
             triggerGeneratorService.createDualWriteTriggers(connection, request, sharedColumns);
             new BackfillWorker().backfill(connection, request, sharedColumns,
+                    databaseConfig.getMigrationBatchSize());
+            new ConsistencyVerifier().verify(connection, request, sharedColumns,
                     databaseConfig.getMigrationBatchSize());
         }
     }
