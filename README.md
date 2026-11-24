@@ -67,7 +67,7 @@ excluded from Git. Do not put credentials in committed files.
 
 ## Java application
 
-The Java 17+ application uses Maven and HikariCP to connect to PostgreSQL. Copy
+The Java 25+ application uses Maven and HikariCP to connect to PostgreSQL. Copy
 `src/main/resources/application.properties.example` to
 `src/main/resources/application.properties` and set your database credentials.
 The local properties file is ignored by Git. Alternatively, configure
@@ -80,28 +80,62 @@ Run the connection health check and startup entry point with:
 mvn compile exec:java -Dexec.mainClass=com.shadowbase.ShadowBaseApplication
 ```
 
-To parse an `ALTER TABLE` statement and provision its shadow table, pass the
-statement to the entry point:
+Run the migration pipeline from the command line with an `ALTER TABLE` statement:
 
 ```bash
-mvn compile exec:java -Dexec.args="--provision ALTER TABLE users ADD COLUMN phone VARCHAR(20)"
+mvn compile exec:java -Dexec.args="--migrate ALTER TABLE users ADD COLUMN phone VARCHAR(20)"
 ```
+
+The previous `--provision` option remains an alias. To accept local HTTP
+requests, start the server (it binds only to `127.0.0.1`):
+
+```bash
+mvn compile exec:java -Dexec.args="--server 8080"
+curl.exe -X POST http://127.0.0.1:8080/migrations `
+  -H "Content-Type: text/plain" `
+  --data "ALTER TABLE users ADD COLUMN phone VARCHAR(20)"
+```
+
+`GET /health` returns the process health status. `POST /migrations` accepts one
+supported `ALTER TABLE ... ADD COLUMN ...` statement as UTF-8 plain text and runs
+the shadow provisioning, dual-write, backfill, and consistency verification
+stages. The HTTP service does not perform table cutover.
+Each migration also reports its lifecycle phase, total duration, backfill
+throughput, verification mismatches, and cutover pause. Because this pipeline
+currently stops after verification, the cutover pause is reported as not
+measured until an atomic cutover operation is implemented.
 
 The default JDBC URL is `jdbc:postgresql://localhost:5432/shadowbase`; the
 example configuration sets a default migration batch size of 1000.
 
-## Four-week development roadmap
+## PostgreSQL integration and benchmark harnesses
 
-- **Week 1 — Setup and design:** Establish the repository, document the
-  migration workflow, and create the baseline live-table schema.
-- **Week 2 — Schema planning:** Implement schema-diff parsing and shadow-table
-  DDL generation, with tests for supported changes.
-- **Week 3 — Data synchronization:** Implement dual-write synchronization and
-  a restartable, throttled chunked backfill.
-- **Week 4 — Safe completion:** Add consistency checks, atomic cutover and
-  rollback handling, then exercise the workflow under concurrent load.
+The concurrency harness creates a temporary PostgreSQL table, runs concurrent
+readers and INSERT/UPDATE/DELETE writers during migration, and verifies that the
+live and shadow rows remain consistent afterward. Configure `DB_URL`,
+`DB_USERNAME`, and `DB_PASSWORD`, then run:
+
+```bash
+mvn test-compile exec:java -Dexec.classpathScope=test "-Dexec.mainClass=com.shadowbase.integration.PostgresConcurrentMigrationIntegrationTest"
+```
+
+The rename benchmark reports min, median, and p95 latency for PostgreSQL's
+transactional table-lock-and-rename sequence over a 50,000-row test table:
+
+```bash
+mvn test-compile exec:java -Dexec.classpathScope=test "-Dexec.mainClass=com.shadowbase.integration.PostgresRenameCutoverBenchmark"
+```
+
+This benchmark measures the database rename sequence directly; it is not a
+benchmark of a `CutoverService`. The current source tree does not yet include a
+production cutover/rollback service, so cutover latency under application
+traffic remains to be measured against that implementation.
 
 ## Current status
 
-Week 1 starter files are in place. The migration engine and the later roadmap
-items are not implemented yet.
+The Java application includes safe `ALTER TABLE ADD COLUMN` parsing, shadow
+table provisioning, PostgreSQL dual-write triggers, keyset-paginated backfill,
+and row/checksum verification. CLI and localhost HTTP triggers are available.
+PostgreSQL-backed concurrent traffic and rename-latency harnesses are provided
+as opt-in test entry points. Transactional promotion, sequence synchronization,
+and rollback are not currently present in this source tree.
