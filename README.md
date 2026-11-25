@@ -105,6 +105,20 @@ throughput, verification mismatches, and cutover pause. Because this pipeline
 currently stops after verification, the cutover pause is reported as not
 measured until an atomic cutover operation is implemented.
 
+To run a concurrent write workload during migration, use `--simulate` with a
+total write rate and worker count:
+
+```bash
+mvn compile exec:java -Dexec.args="--simulate 20 4 ALTER TABLE users ADD COLUMN phone VARCHAR(20)"
+```
+
+The simulator continuously inserts and updates the migration's live table at
+the requested aggregate rate and stops after the migration completes or fails.
+Its built-in workload targets the `users` table shape from `sql/init_schema.sql`
+(`id`, `username`, and `email`). Migration metrics include successful inserts,
+successful updates, and failed write attempts; an update against an empty table
+is counted as a failed write.
+
 The default JDBC URL is `jdbc:postgresql://localhost:5432/shadowbase`; the
 example configuration sets a default migration batch size of 1000.
 

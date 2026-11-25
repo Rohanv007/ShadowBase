@@ -15,6 +15,9 @@ public final class MigrationMetricsTest {
         metrics.transitionTo(MigrationPhase.BACKFILLING);
         metrics.addBackfilledRows(200);
         metrics.addProcessedBatches(4);
+        metrics.addSimulatedInserts(3);
+        metrics.addSimulatedUpdates(2);
+        metrics.addFailedSimulatedWrites(1);
         Thread.sleep(2);
         metrics.transitionTo(MigrationPhase.VERIFYING);
         metrics.addVerificationMismatches(1);
@@ -26,7 +29,13 @@ public final class MigrationMetricsTest {
         assertEquals(200L, metrics.getRowsBackfilled(), "backfilled rows");
         assertEquals(4L, metrics.getBatchesProcessed(), "processed batches");
         assertEquals(1L, metrics.getVerificationMismatches(), "verification mismatches");
+        assertEquals(3L, metrics.getSimulatedInserts(), "simulated inserts");
+        assertEquals(2L, metrics.getSimulatedUpdates(), "simulated updates");
+        assertEquals(1L, metrics.getFailedSimulatedWrites(), "failed simulated writes");
         assertContains(metrics.formatSummaryReport(), "200 rows in 4 batches", "backfill summary");
+        assertContains(metrics.formatSummaryReport(),
+                "Simulated traffic: 3 inserts, 2 updates, 1 failed writes",
+                "simulated traffic summary");
         assertContains(metrics.formatSummaryReport(), "Cutover pause: not measured",
                 "unperformed cutover");
         if (metrics.getBackfillRowsPerSecond() <= 0.0) {

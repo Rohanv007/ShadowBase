@@ -16,6 +16,9 @@ public final class MigrationMetrics {
     private final AtomicLong batchesProcessed = new AtomicLong();
     private final AtomicLong verificationMismatches = new AtomicLong();
     private final AtomicLong cutoverLockDurationMs = new AtomicLong();
+    private final AtomicLong simulatedInserts = new AtomicLong();
+    private final AtomicLong simulatedUpdates = new AtomicLong();
+    private final AtomicLong failedSimulatedWrites = new AtomicLong();
     private final AtomicLong backfillStartedAtNanos = new AtomicLong();
     private final AtomicLong backfillDurationNanos = new AtomicLong();
     private volatile boolean cutoverLockDurationMeasured;
@@ -50,6 +53,18 @@ public final class MigrationMetrics {
         return cutoverLockDurationMs.get();
     }
 
+    public long getSimulatedInserts() {
+        return simulatedInserts.get();
+    }
+
+    public long getSimulatedUpdates() {
+        return simulatedUpdates.get();
+    }
+
+    public long getFailedSimulatedWrites() {
+        return failedSimulatedWrites.get();
+    }
+
     public synchronized void transitionTo(MigrationPhase phase) {
         Objects.requireNonNull(phase, "phase must not be null");
         if (endedAt != null) {
@@ -73,6 +88,18 @@ public final class MigrationMetrics {
 
     public void addVerificationMismatches(long count) {
         addNonNegative(verificationMismatches, count, "count");
+    }
+
+    public void addSimulatedInserts(long count) {
+        addNonNegative(simulatedInserts, count, "count");
+    }
+
+    public void addSimulatedUpdates(long count) {
+        addNonNegative(simulatedUpdates, count, "count");
+    }
+
+    public void addFailedSimulatedWrites(long count) {
+        addNonNegative(failedSimulatedWrites, count, "count");
     }
 
     public void measureCutoverLock(Runnable lockHeldSwap) {
@@ -129,10 +156,12 @@ public final class MigrationMetrics {
                         + "Total duration: %d ms%n"
                         + "Backfill: %d rows in %d batches (%.2f rows/sec)%n"
                         + "Verification mismatches: %d%n"
+                        + "Simulated traffic: %d inserts, %d updates, %d failed writes%n"
                         + "Cutover pause: %s",
                 currentPhase.get(), getTotalDurationMillis(), rowsBackfilled.get(),
                 batchesProcessed.get(), getBackfillRowsPerSecond(),
-                verificationMismatches.get(), cutoverStatus);
+                verificationMismatches.get(), simulatedInserts.get(), simulatedUpdates.get(),
+                failedSimulatedWrites.get(), cutoverStatus);
     }
 
     private synchronized void finish(MigrationPhase terminalPhase) {
