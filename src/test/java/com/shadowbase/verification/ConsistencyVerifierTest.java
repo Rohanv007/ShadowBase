@@ -18,8 +18,24 @@ public final class ConsistencyVerifierTest {
 
     public static void main(String[] args) throws SQLException {
         verifiesMatchingRowsUsingKeysetChecksumPages();
+        mapsRenamedColumnsWhenVerifyingConsistency();
         reportsMismatchedRowsAndBlocksVerification();
         System.out.println("ConsistencyVerifierTest passed");
+    }
+
+    private static void mapsRenamedColumnsWhenVerifyingConsistency() throws SQLException {
+        List<String> preparedSql = new ArrayList<>();
+        Connection connection = connection(preparedSql, 1, 1, List.of(List.of()));
+        MigrationRequest request = DdlParser.parse(
+                "ALTER TABLE users RENAME COLUMN username TO handle");
+
+        ConsistencyVerifier.VerificationResult result = new ConsistencyVerifier().inspect(
+                connection, request, List.of("id", "username"), 10);
+
+        assertEquals(true, result.isConsistent(), "renamed-column consistency");
+        String pageSql = preparedSql.get(2);
+        assertContains(pageSql, "live_row.\"username\"", "live rename source");
+        assertContains(pageSql, "shadow_row.\"handle\"", "shadow rename target");
     }
 
     private static void verifiesMatchingRowsUsingKeysetChecksumPages() throws SQLException {

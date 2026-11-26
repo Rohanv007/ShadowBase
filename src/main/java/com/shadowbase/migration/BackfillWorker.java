@@ -30,13 +30,18 @@ public final class BackfillWorker {
             throw new IllegalArgumentException("batchSize must be a positive integer");
         }
 
-        String columnList = columns.stream().map(BackfillWorker::quoteIdentifier)
+        List<String> shadowColumns = columns.stream()
+                .map(column -> validatedRequest.columnMappings().getOrDefault(column, column))
+                .toList();
+        String targetColumnList = shadowColumns.stream().map(BackfillWorker::quoteIdentifier)
+                .reduce((left, right) -> left + ", " + right).orElseThrow();
+        String sourceColumnList = columns.stream().map(BackfillWorker::quoteIdentifier)
                 .reduce((left, right) -> left + ", " + right).orElseThrow();
         String id = quoteIdentifier("id");
         String pageSql = "SELECT " + id + " FROM " + validatedRequest.tableName()
                 + " WHERE " + id + " > ? ORDER BY " + id + " ASC LIMIT ?";
         String insertSql = "INSERT INTO " + validatedRequest.shadowTableName()
-                + " (" + columnList + ") SELECT " + columnList + " FROM "
+                + " (" + targetColumnList + ") SELECT " + sourceColumnList + " FROM "
                 + validatedRequest.tableName() + " WHERE " + id + " > ? ORDER BY "
                 + id + " ASC LIMIT ? ON CONFLICT (" + id + ") DO NOTHING";
 

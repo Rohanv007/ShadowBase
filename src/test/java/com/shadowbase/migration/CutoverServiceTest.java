@@ -7,6 +7,8 @@ import com.shadowbase.parser.DdlParser;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -18,9 +20,24 @@ public final class CutoverServiceTest {
 
     public static void main(String[] args) throws SQLException {
         performsTransactionalCutoverAndMeasuresLockTime();
+        blocksCutoverWhenAShadowIndexIsInvalid();
         rollbackPreservesTheDisplacedTable();
         rollsBackWhenPromotionFails();
         System.out.println("CutoverServiceTest passed");
+    }
+
+    private static void blocksCutoverWhenAShadowIndexIsInvalid() throws SQLException {
+        List<String> operations = new ArrayList<>();
+        try {
+            new CutoverService().cutover(connection(operations, null, false), request(),
+                    new MigrationMetrics());
+            throw new AssertionError("Expected invalid shadow index to block cutover");
+        } catch (IllegalStateException expected) {
+            if (!expected.getMessage().contains("users_name_idx")) {
+                throw new AssertionError("Invalid index name should be reported", expected);
+            }
+        }
+        assertEquals(List.of(), operations, "operations before invalid index blocks cutover");
     }
 
     private static void performsTransactionalCutoverAndMeasuresLockTime()
@@ -80,6 +97,11 @@ public final class CutoverServiceTest {
     }
 
     private static Connection connection(List<String> operations, String failingSql) {
+        return connection(operations, failingSql, true);
+    }
+
+    private static Connection connection(List<String> operations, String failingSql,
+                                         boolean indexValid) {
         InvocationHandler statementHandler = (proxy, method, args) -> {
             if ("execute".equals(method.getName())) {
                 String sql = (String) args[0];
@@ -110,6 +132,7 @@ public final class CutoverServiceTest {
                     case "createStatement" -> Proxy.newProxyInstance(
                             Statement.class.getClassLoader(), new Class<?>[]{Statement.class},
                             statementHandler);
+                    case "prepareStatement" -> indexQuery(indexValid);
                     case "commit" -> {
                         operations.add("COMMIT");
                         yield null;
@@ -124,6 +147,27 @@ public final class CutoverServiceTest {
         };
         return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
                 new Class<?>[]{Connection.class}, connectionHandler);
+    }
+
+    private static PreparedStatement indexQuery(boolean indexValid) {
+        int[] rowIndex = {-1};
+        InvocationHandler resultSetHandler = (proxy, method, args) -> switch (method.getName()) {
+            case "next" -> ++rowIndex[0] == 0 && !indexValid;
+            case "getString" -> "index_name".equals(args[0]) ? "users_name_idx"
+                    : "CREATE INDEX users_name_idx";
+            case "getBoolean" -> false;
+            case "close" -> null;
+            default -> throw new UnsupportedOperationException(method.getName());
+        };
+        ResultSet results = (ResultSet) Proxy.newProxyInstance(ResultSet.class.getClassLoader(),
+                new Class<?>[]{ResultSet.class}, resultSetHandler);
+        InvocationHandler statementHandler = (proxy, method, args) -> switch (method.getName()) {
+            case "executeQuery" -> results;
+            case "setString", "close" -> null;
+            default -> throw new UnsupportedOperationException(method.getName());
+        };
+        return (PreparedStatement) Proxy.newProxyInstance(PreparedStatement.class.getClassLoader(),
+                new Class<?>[]{PreparedStatement.class}, statementHandler);
     }
 
     private static void assertBefore(List<String> operations, String first, String second) {

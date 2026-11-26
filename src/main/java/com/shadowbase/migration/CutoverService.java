@@ -33,6 +33,7 @@ public final class CutoverService {
         String shadowTable = validatedRequest.shadowTableName();
         String archivedTable = withTablePrefix(liveTable, "_old_");
 
+        new IndexMigrationService().validateIndexes(connection, validatedRequest);
         AtomicReference<SQLException> cutoverFailure = new AtomicReference<>();
         metrics.measureCutoverLock(() -> {
             try {

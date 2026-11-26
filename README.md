@@ -110,9 +110,13 @@ curl.exe -X POST http://127.0.0.1:8080/migrations `
 ```
 
 `GET /health` returns the process health status. `POST /migrations` accepts one
-supported `ALTER TABLE ... ADD COLUMN ...` statement as UTF-8 plain text and runs
-the shadow provisioning, dual-write, backfill, and consistency verification
-stages. The HTTP service and existing `--migrate`/`--simulate` options stop after
+`ALTER TABLE` statement as UTF-8 plain text and runs the shadow provisioning,
+dual-write, backfill, and consistency verification stages. Multi-action
+statements support `ADD COLUMN`, `DROP COLUMN`, `RENAME COLUMN`, and
+`ALTER COLUMN ... TYPE`; renamed columns are mapped between the live and shadow
+tables, and dropped or otherwise non-intersecting columns are excluded from
+dual-write and verification projections. The HTTP service and existing
+`--migrate`/`--simulate` options stop after
 verification; the interactive CLI is the entry point for cutover and rollback.
 The CLI reports lifecycle phase, total duration, backfill throughput,
 verification mismatches, and measured cutover pause. For workflows that stop
@@ -159,9 +163,10 @@ traffic.
 
 ## Current status
 
-The Java application includes safe `ALTER TABLE ADD COLUMN` parsing, shadow
-table provisioning, PostgreSQL dual-write triggers, keyset-paginated backfill,
-row/checksum verification, and transactional table promotion/rollback. The
-interactive CLI and localhost HTTP triggers are available. PostgreSQL-backed
+The Java application includes multi-action `ALTER TABLE` parsing, shadow table
+provisioning, PostgreSQL dual-write triggers, keyset-paginated backfill,
+row/checksum verification, concurrent shadow-index creation and validity
+checks before cutover, and transactional table promotion/rollback. The
+interactive CLI and localhost HTTP service are available. PostgreSQL-backed
 concurrent traffic and rename-latency harnesses are provided as opt-in test
 entry points. Sequence synchronization is not currently implemented.

@@ -13,6 +13,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -31,7 +32,10 @@ public final class TriggerGeneratorService {
         Objects.requireNonNull(connection, "connection must not be null");
         MigrationRequest validatedRequest = validateRequest(request);
         QualifiedTableName table = QualifiedTableName.parse(validatedRequest.tableName());
-        return inspectLiveColumns(connection, table).columns();
+        List<String> liveColumns = inspectColumns(connection, table).columns();
+        List<String> shadowColumns = inspectColumns(connection,
+                QualifiedTableName.parse(validatedRequest.shadowTableName())).columns();
+        return resolveSharedColumns(liveColumns, shadowColumns, liveColumns, validatedRequest);
     }
 
     public void createDualWriteTriggers(Connection connection, MigrationRequest request,
@@ -41,8 +45,11 @@ public final class TriggerGeneratorService {
         Objects.requireNonNull(sharedColumnNames, "sharedColumnNames must not be null");
 
         QualifiedTableName table = QualifiedTableName.parse(validatedRequest.tableName());
-        List<String> liveColumns = inspectLiveColumns(connection, table).columns();
-        List<String> columns = validateSharedColumns(liveColumns, sharedColumnNames);
+        List<String> liveColumns = inspectColumns(connection, table).columns();
+        List<String> shadowColumns = inspectColumns(connection,
+                QualifiedTableName.parse(validatedRequest.shadowTableName())).columns();
+        List<String> columns = resolveSharedColumns(
+                liveColumns, shadowColumns, sharedColumnNames, validatedRequest);
         if (!columns.contains("id")) {
             throw new IllegalArgumentException("The shared columns must include the primary key id");
         }
@@ -50,7 +57,7 @@ public final class TriggerGeneratorService {
         String shadowTable = validatedRequest.shadowTableName();
         String functionName = table.qualify("_shadow_sync_fn_" + table.table());
         String triggerName = "_shadow_sync_trg_" + table.table();
-        String insertSql = buildUpsertSql(shadowTable, columns);
+        String insertSql = buildUpsertSql(shadowTable, columns, validatedRequest.columnMappings());
         String functionSql = buildFunctionSql(functionName, insertSql, shadowTable, "id");
         String triggerSql = "CREATE TRIGGER " + quoteIdentifier(triggerName)
                 + " AFTER INSERT OR UPDATE OR DELETE ON " + validatedRequest.tableName()
@@ -80,8 +87,10 @@ public final class TriggerGeneratorService {
         LOGGER.info("Dual-write trigger and function removed from {}", validatedRequest.tableName());
     }
 
-    private static List<String> validateSharedColumns(List<String> liveColumns,
-                                                       List<String> sharedColumnNames) {
+    private static List<String> resolveSharedColumns(List<String> liveColumns,
+                                                     List<String> shadowColumns,
+                                                     List<String> sharedColumnNames,
+                                                     MigrationRequest request) {
         Set<String> requested = new HashSet<>();
         for (String column : sharedColumnNames) {
             if (column == null || column.isBlank()) {
@@ -98,17 +107,17 @@ public final class TriggerGeneratorService {
 
         List<String> orderedColumns = new ArrayList<>();
         for (String liveColumn : liveColumns) {
-            if (requested.contains(liveColumn)) {
+            String shadowColumn = request.columnMappings().getOrDefault(liveColumn, liveColumn);
+            if (requested.contains(liveColumn)
+                    && !request.droppedColumns().contains(liveColumn)
+                    && shadowColumns.contains(shadowColumn)) {
                 orderedColumns.add(liveColumn);
             }
-        }
-        if (orderedColumns.isEmpty()) {
-            throw new IllegalArgumentException("At least one shared column is required");
         }
         return List.copyOf(orderedColumns);
     }
 
-    private static ColumnMetadata inspectLiveColumns(Connection connection, QualifiedTableName table)
+    private static ColumnMetadata inspectColumns(Connection connection, QualifiedTableName table)
             throws SQLException {
         List<String> columns = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(COLUMN_QUERY)) {
@@ -121,20 +130,26 @@ public final class TriggerGeneratorService {
             }
         }
         if (columns.isEmpty()) {
-            throw new SQLException("No visible columns found for live table " + table.sqlName());
+            throw new SQLException("No visible columns found for table " + table.sqlName());
         }
         return new ColumnMetadata(List.copyOf(columns));
     }
 
-    private static String buildUpsertSql(String shadowTable, List<String> columns) {
-        String columnList = columns.stream().map(TriggerGeneratorService::quoteIdentifier)
+    private static String buildUpsertSql(String shadowTable, List<String> columns,
+                                         Map<String, String> columnMappings) {
+        List<String> shadowColumns = columns.stream()
+                .map(column -> columnMappings.getOrDefault(column, column)).toList();
+        String columnList = shadowColumns.stream().map(TriggerGeneratorService::quoteIdentifier)
                 .reduce((left, right) -> left + ", " + right).orElseThrow();
         String newValues = columns.stream().map(column -> "NEW." + quoteIdentifier(column))
                 .reduce((left, right) -> left + ", " + right).orElseThrow();
-        List<String> updates = columns.stream()
-                .filter(column -> !"id".equals(column))
-                .map(column -> quoteIdentifier(column) + " = EXCLUDED." + quoteIdentifier(column))
-                .toList();
+        List<String> updates = new ArrayList<>();
+        for (int index = 0; index < columns.size(); index++) {
+            if (!"id".equals(columns.get(index))) {
+                String shadowColumn = quoteIdentifier(shadowColumns.get(index));
+                updates.add(shadowColumn + " = EXCLUDED." + shadowColumn);
+            }
+        }
         String conflictAction = updates.isEmpty()
                 ? "DO NOTHING"
                 : "DO UPDATE SET " + String.join(", ", updates);

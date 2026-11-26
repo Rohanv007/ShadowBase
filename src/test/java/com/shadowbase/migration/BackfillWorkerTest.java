@@ -19,8 +19,26 @@ public final class BackfillWorkerTest {
 
     public static void main(String[] args) throws SQLException, InterruptedException {
         copiesKeysetPagesAndTracksProgress();
+        mapsRenamedColumnsDuringBackfill();
         completesWhenTheSourceTableIsEmpty();
         System.out.println("BackfillWorkerTest passed");
+    }
+
+    private static void mapsRenamedColumnsDuringBackfill() throws SQLException, InterruptedException {
+        List<String> preparedSql = new ArrayList<>();
+        Connection connection = connection(preparedSql, new ArrayList<>(),
+                List.of(List.of(1L), List.of()), List.of(1));
+        MigrationRequest request = DdlParser.parse(
+                "ALTER TABLE users RENAME COLUMN username TO handle");
+
+        new BackfillWorker().backfill(connection, request, List.of("id", "username"), 10);
+
+        assertContains(preparedSql.get(0), "SELECT \"id\" FROM users",
+                "backfill keyset source");
+        assertContains(preparedSql.get(1),
+                "INSERT INTO _shadow_users (\"id\", \"handle\") SELECT \"id\", \"username\" "
+                        + "FROM users",
+                "source-to-shadow rename mapping");
     }
 
     private static void copiesKeysetPagesAndTracksProgress() throws SQLException, InterruptedException {

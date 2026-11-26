@@ -96,7 +96,10 @@ public final class ConsistencyVerifier {
     private static String buildPageSql(MigrationRequest request, List<String> columns) {
         String id = quoteIdentifier("id");
         String liveChecksum = checksumExpression("live_row", columns);
-        String shadowChecksum = checksumExpression("shadow_row", columns);
+        List<String> shadowColumns = columns.stream()
+                .map(column -> request.columnMappings().getOrDefault(column, column))
+                .toList();
+        String shadowChecksum = checksumExpression("shadow_row", shadowColumns);
         return "SELECT page_ids." + id + ", "
                 + "CASE WHEN live_row." + id + " IS NOT NULL THEN " + liveChecksum
                 + " END AS live_checksum, "

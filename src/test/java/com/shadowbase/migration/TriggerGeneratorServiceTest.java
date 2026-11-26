@@ -19,6 +19,7 @@ public final class TriggerGeneratorServiceTest {
 
     public static void main(String[] args) throws SQLException {
         createsTriggerFromLiveColumns();
+        excludesDroppedColumnsAndMapsRenamedColumns();
         rejectsSharedColumnsMissingFromLiveTable();
         dropsTriggerAndFunction();
         System.out.println("TriggerGeneratorServiceTest passed");
@@ -35,7 +36,7 @@ public final class TriggerGeneratorServiceTest {
         new TriggerGeneratorService().createDualWriteTriggers(connection, request,
                 List.of("created_at", "id", "username"));
 
-        assertEquals(1, metadataQueries.size(), "metadata query count");
+        assertEquals(2, metadataQueries.size(), "metadata query count");
         assertContains(metadataQueries.get(0), "information_schema.columns", "metadata query");
         assertEquals(3, statements.size(), "trigger DDL count");
         assertContains(statements.get(0), "DROP TRIGGER IF EXISTS", "trigger replacement");
@@ -53,6 +54,46 @@ public final class TriggerGeneratorServiceTest {
         assertContains(statements.get(2),
                 "AFTER INSERT OR UPDATE OR DELETE ON public.users FOR EACH ROW",
                 "trigger events");
+    }
+
+    private static void excludesDroppedColumnsAndMapsRenamedColumns() throws SQLException {
+        List<String> statements = new ArrayList<>();
+        List<String> metadataQueries = new ArrayList<>();
+        Connection connection = connection(statements, metadataQueries,
+                List.of("id", "username", "email"), List.of("id", "handle"));
+        MigrationRequest request = DdlParser.parse("ALTER TABLE public.users "
+                + "RENAME COLUMN username TO handle, DROP COLUMN email");
+
+        new TriggerGeneratorService().createDualWriteTriggers(connection, request,
+                List.of("id", "username", "email"));
+
+        String functionSql = statements.get(1);
+        assertContains(functionSql, "INSERT INTO public._shadow_users (\"id\", \"handle\") "
+                + "VALUES (NEW.\"id\", NEW.\"username\")", "renamed and intersecting columns");
+        if (functionSql.contains("\"email\"")) {
+            throw new AssertionError("Dropped column must not be referenced by the trigger");
+        }
+
+        List<String> droppedStatements = new ArrayList<>();
+        MigrationRequest droppedRequest = DdlParser.parse(
+                "ALTER TABLE public.users DROP COLUMN email");
+        new TriggerGeneratorService().createDualWriteTriggers(
+                connection(droppedStatements, new ArrayList<>(),
+                        List.of("id", "username", "email"), List.of("id", "username", "email")),
+                droppedRequest, List.of("id", "username", "email"));
+        if (droppedStatements.get(1).contains("\"email\"")) {
+            throw new AssertionError("Request-dropped columns must be excluded from the trigger");
+        }
+
+        List<String> intersectedStatements = new ArrayList<>();
+        new TriggerGeneratorService().createDualWriteTriggers(
+                connection(intersectedStatements, new ArrayList<>(),
+                        List.of("id", "username", "email"), List.of("id", "username")),
+                DdlParser.parse("ALTER TABLE public.users ADD COLUMN phone TEXT"),
+                List.of("id", "username", "email"));
+        if (intersectedStatements.get(1).contains("\"email\"")) {
+            throw new AssertionError("Columns absent from the shadow table must not be synced");
+        }
     }
 
     private static void rejectsSharedColumnsMissingFromLiveTable() {
@@ -87,26 +128,16 @@ public final class TriggerGeneratorServiceTest {
 
     private static Connection connection(List<String> statements, List<String> metadataQueries,
                                          List<String> liveColumns) {
-        InvocationHandler resultSetHandler = new InvocationHandler() {
-            private int index = -1;
+        return connection(statements, metadataQueries, liveColumns, liveColumns);
+    }
 
-            @Override
-            public Object invoke(Object proxy, java.lang.reflect.Method method, Object[] args) {
-                return switch (method.getName()) {
-                    case "next" -> ++index < liveColumns.size();
-                    case "getString" -> "table_schema".equals(args[0])
-                            ? "public" : liveColumns.get(index);
-                    case "close" -> null;
-                    default -> throw new UnsupportedOperationException(method.getName());
-                };
-            }
-        };
-        ResultSet results = (ResultSet) Proxy.newProxyInstance(ResultSet.class.getClassLoader(),
-                new Class<?>[]{ResultSet.class}, resultSetHandler);
+    private static Connection connection(List<String> statements, List<String> metadataQueries,
+                                         List<String> liveColumns, List<String> shadowColumns) {
 
+        int[] columnQueryCount = {0};
         InvocationHandler preparedStatementHandler = (proxy, method, args) -> {
             if ("executeQuery".equals(method.getName())) {
-                return results;
+                return resultSet(columnQueryCount[0]++ % 2 == 0 ? liveColumns : shadowColumns);
             }
             if ("close".equals(method.getName()) || "setString".equals(method.getName())) {
                 return null;
@@ -142,6 +173,24 @@ public final class TriggerGeneratorServiceTest {
         };
         return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
                 new Class<?>[]{Connection.class}, connectionHandler);
+    }
+
+    private static ResultSet resultSet(List<String> columns) {
+        InvocationHandler resultSetHandler = new InvocationHandler() {
+            private int index = -1;
+
+            @Override
+            public Object invoke(Object proxy, java.lang.reflect.Method method, Object[] args) {
+                return switch (method.getName()) {
+                    case "next" -> ++index < columns.size();
+                    case "getString" -> columns.get(index);
+                    case "close" -> null;
+                    default -> throw new UnsupportedOperationException(method.getName());
+                };
+            }
+        };
+        return (ResultSet) Proxy.newProxyInstance(ResultSet.class.getClassLoader(),
+                new Class<?>[]{ResultSet.class}, resultSetHandler);
     }
 
     private static void assertContains(String actual, String expected, String description) {
