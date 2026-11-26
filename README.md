@@ -80,6 +80,19 @@ Run the connection health check and startup entry point with:
 mvn compile exec:java -Dexec.mainClass=com.shadowbase.ShadowBaseApplication
 ```
 
+Launch the interactive operator CLI explicitly with:
+
+```bash
+mvn compile exec:java -Dexec.args="--cli"
+```
+
+Running the application with no arguments in a terminal also opens the
+interactive CLI. It supports DDL validation, a full migration with cutover,
+the migration with concurrent traffic simulation, and rollback of the latest
+cutover. The CLI retains the former live table as `_old_<table>` during
+cutover; rollback restores that table and retains the displaced table as
+`_failed_<table>`.
+
 Run the migration pipeline from the command line with an `ALTER TABLE` statement:
 
 ```bash
@@ -99,11 +112,11 @@ curl.exe -X POST http://127.0.0.1:8080/migrations `
 `GET /health` returns the process health status. `POST /migrations` accepts one
 supported `ALTER TABLE ... ADD COLUMN ...` statement as UTF-8 plain text and runs
 the shadow provisioning, dual-write, backfill, and consistency verification
-stages. The HTTP service does not perform table cutover.
-Each migration also reports its lifecycle phase, total duration, backfill
-throughput, verification mismatches, and cutover pause. Because this pipeline
-currently stops after verification, the cutover pause is reported as not
-measured until an atomic cutover operation is implemented.
+stages. The HTTP service and existing `--migrate`/`--simulate` options stop after
+verification; the interactive CLI is the entry point for cutover and rollback.
+The CLI reports lifecycle phase, total duration, backfill throughput,
+verification mismatches, and measured cutover pause. For workflows that stop
+after verification, the cutover pause is reported as not measured.
 
 To run a concurrent write workload during migration, use `--simulate` with a
 total write rate and worker count:
@@ -140,16 +153,15 @@ transactional table-lock-and-rename sequence over a 50,000-row test table:
 mvn test-compile exec:java -Dexec.classpathScope=test "-Dexec.mainClass=com.shadowbase.integration.PostgresRenameCutoverBenchmark"
 ```
 
-This benchmark measures the database rename sequence directly; it is not a
-benchmark of a `CutoverService`. The current source tree does not yet include a
-production cutover/rollback service, so cutover latency under application
-traffic remains to be measured against that implementation.
+This benchmark measures the database rename sequence directly; it does not
+measure the interactive CLI's full migration pipeline under application
+traffic.
 
 ## Current status
 
 The Java application includes safe `ALTER TABLE ADD COLUMN` parsing, shadow
 table provisioning, PostgreSQL dual-write triggers, keyset-paginated backfill,
-and row/checksum verification. CLI and localhost HTTP triggers are available.
-PostgreSQL-backed concurrent traffic and rename-latency harnesses are provided
-as opt-in test entry points. Transactional promotion, sequence synchronization,
-and rollback are not currently present in this source tree.
+row/checksum verification, and transactional table promotion/rollback. The
+interactive CLI and localhost HTTP triggers are available. PostgreSQL-backed
+concurrent traffic and rename-latency harnesses are provided as opt-in test
+entry points. Sequence synchronization is not currently implemented.

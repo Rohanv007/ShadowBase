@@ -44,6 +44,16 @@ public final class MigrationService {
 
     public MigrationResult migrate(String alterSql, MigrationMetrics metrics)
             throws SQLException, InterruptedException {
+        return migrate(alterSql, metrics, false);
+    }
+
+    public MigrationResult migrateWithCutover(String alterSql, MigrationMetrics metrics)
+            throws SQLException, InterruptedException {
+        return migrate(alterSql, metrics, true);
+    }
+
+    private MigrationResult migrate(String alterSql, MigrationMetrics metrics, boolean cutover)
+            throws SQLException, InterruptedException {
         Objects.requireNonNull(metrics, "metrics must not be null");
         long startNanos = System.nanoTime();
 
@@ -75,6 +85,9 @@ public final class MigrationService {
                                 + "liveRows={}, shadowRows={}",
                         request.tableName(), request.shadowTableName(),
                         verification.liveRowCount(), verification.shadowRowCount());
+                if (cutover) {
+                    new CutoverService().cutover(connection, request, metrics);
+                }
 
                 result = new MigrationResult(
                         request.tableName(), request.shadowTableName(),

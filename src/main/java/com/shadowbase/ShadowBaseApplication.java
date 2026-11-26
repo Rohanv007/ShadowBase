@@ -1,5 +1,6 @@
 package com.shadowbase;
 
+import com.shadowbase.cli.ShadowBaseCli;
 import com.shadowbase.config.DatabaseConfig;
 import com.shadowbase.metrics.MigrationMetrics;
 import com.shadowbase.migration.MigrationService;
@@ -27,6 +28,13 @@ public final class ShadowBaseApplication {
             }
             LOGGER.info("ShadowBase sandbox startup ready (migration batch size: {})",
                     databaseConfig.getMigrationBatchSize());
+            if ((args.length == 1 && "--cli".equals(args[0]))
+                    || (args.length == 0 && System.console() != null)) {
+                try (ShadowBaseCli cli = new ShadowBaseCli(databaseConfig)) {
+                    cli.run();
+                }
+                return;
+            }
             if (args.length > 0) {
                 if ("--server".equals(args[0])) {
                     startServer(databaseConfig, args);
@@ -40,7 +48,8 @@ public final class ShadowBaseApplication {
                             String.join(" ", Arrays.copyOfRange(args, 3, args.length)));
                 } else {
                     throw new IllegalArgumentException(
-                            "Usage: ShadowBaseApplication --migrate \"ALTER TABLE ... ADD COLUMN ...\""
+                            "Usage: ShadowBaseApplication --cli | --migrate "
+                                    + "\"ALTER TABLE ... ADD COLUMN ...\""
                                     + " | --simulate <writesPerSecond> <workerCount> "
                                     + "\"ALTER TABLE ... ADD COLUMN ...\" | --server [port]");
                 }
