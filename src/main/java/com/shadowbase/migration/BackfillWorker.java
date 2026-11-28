@@ -17,8 +17,22 @@ import java.util.Set;
 
 public final class BackfillWorker {
     private static final Logger LOGGER = LoggerFactory.getLogger(BackfillWorker.class);
-    private static final long BATCH_DELAY_MILLIS = 50;
     private static final long INITIAL_LAST_PROCESSED_ID = Long.MIN_VALUE;
+    private static final long TARGET_BATCH_LATENCY_MS = 500;
+    private final ThrottleController throttleController;
+
+    public BackfillWorker() {
+        this(new ThrottleController());
+    }
+
+    public BackfillWorker(ThrottleController throttleController) {
+        this.throttleController = Objects.requireNonNull(throttleController,
+                "throttleController must not be null");
+    }
+
+    public ThrottleController getThrottleController() {
+        return throttleController;
+    }
 
     public BackfillProgress backfill(Connection connection, MigrationRequest request,
                                      List<String> sharedColumnNames, int batchSize)
@@ -50,22 +64,26 @@ public final class BackfillWorker {
         long batchCount = 0;
 
         while (true) {
+            throttleController.waitIfPaused();
             if (batchCount > 0) {
                 try {
-                    Thread.sleep(BATCH_DELAY_MILLIS);
+                    Thread.sleep(throttleController.getSleepDelayMs());
                 } catch (InterruptedException interruption) {
                     Thread.currentThread().interrupt();
                     throw interruption;
                 }
+                throttleController.waitIfPaused();
             }
 
             long afterId = lastProcessedId == null
                     ? INITIAL_LAST_PROCESSED_ID : lastProcessedId;
+            int currentBatchSize = Math.min(batchSize, throttleController.getCurrentBatchSize());
+            long batchStartNanos = System.nanoTime();
             int batchRows = 0;
             long batchLastId = afterId;
             try (PreparedStatement pageStatement = connection.prepareStatement(pageSql)) {
                 pageStatement.setLong(1, afterId);
-                pageStatement.setInt(2, batchSize);
+                pageStatement.setInt(2, currentBatchSize);
                 try (ResultSet results = pageStatement.executeQuery()) {
                     while (results.next()) {
                         batchLastId = results.getLong(1);
@@ -85,10 +103,12 @@ public final class BackfillWorker {
             int copiedRows;
             try (PreparedStatement insertStatement = connection.prepareStatement(insertSql)) {
                 insertStatement.setLong(1, afterId);
-                insertStatement.setInt(2, batchSize);
+                insertStatement.setInt(2, currentBatchSize);
                 copiedRows = insertStatement.executeUpdate();
             }
 
+            long batchDurationMs = (System.nanoTime() - batchStartNanos) / 1_000_000;
+            throttleController.adjustForLatency(batchDurationMs, TARGET_BATCH_LATENCY_MS);
             lastProcessedId = batchLastId;
             totalRowsCopied += copiedRows;
             batchCount++;

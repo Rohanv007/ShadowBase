@@ -139,6 +139,15 @@ is counted as a failed write.
 The default JDBC URL is `jdbc:postgresql://localhost:5432/shadowbase`; the
 example configuration sets a default migration batch size of 1000.
 
+Backfills use adaptive pacing: batch size starts at 1000 and is bounded between
+100 and 10000, while the inter-batch delay starts at 50 ms. Batch execution
+latency reduces batch size and increases the delay when it exceeds the 500 ms
+target; the controller gradually reverses those changes as load subsides.
+Operators holding a `MigrationService` can call
+`getThrottleController().pause()` and `getThrottleController().resume()` to
+suspend and continue backfill at a batch boundary without losing its keyset
+cursor.
+
 ## PostgreSQL integration and benchmark harnesses
 
 The concurrency harness creates a temporary PostgreSQL table, runs concurrent

@@ -18,6 +18,7 @@ public final class MigrationService {
     private static final Logger LOGGER = LoggerFactory.getLogger(MigrationService.class);
     private final DatabaseConfig databaseConfig;
     private final int batchSize;
+    private final ThrottleController throttleController = new ThrottleController();
 
     public MigrationService(DatabaseConfig databaseConfig) {
         this(databaseConfig, Objects.requireNonNull(databaseConfig,
@@ -31,6 +32,10 @@ public final class MigrationService {
             throw new IllegalArgumentException("batchSize must be a positive integer");
         }
         this.batchSize = batchSize;
+    }
+
+    public ThrottleController getThrottleController() {
+        return throttleController;
     }
 
     public MigrationResult migrate(String alterSql) throws SQLException, InterruptedException {
@@ -68,7 +73,7 @@ public final class MigrationService {
                 metrics.transitionTo(MigrationPhase.TRIGGER_SYNC);
                 triggerGenerator.createDualWriteTriggers(connection, request, sharedColumns);
                 metrics.transitionTo(MigrationPhase.BACKFILLING);
-                BackfillWorker.BackfillProgress progress = new BackfillWorker().backfill(
+                BackfillWorker.BackfillProgress progress = new BackfillWorker(throttleController).backfill(
                         connection, request, sharedColumns, batchSize);
                 metrics.addBackfilledRows(progress.totalRowsCopied());
                 metrics.addProcessedBatches(progress.batchCount());
